@@ -21,7 +21,7 @@ dependencies = [
 s3-bagit = "s3_bagit.cli:main"
 
 [tool.uv.sources]
-s3-archive = { git = "https://github.com/borwickatuw/s3-archive", tag = "v1.16.1" }
+s3-archive = { git = "https://github.com/UW-Digital-Strategies/s3-archive", tag = "v1.16.1" }
 
 [dependency-groups]
 dev = [
@@ -29,7 +29,8 @@ dev = [
     "vulture>=2.15",
     "bandit[toml]>=1.7",
     "detect-secrets>=1.5",
-    "fileplan==0.8.0",
+    "fileplan==0.11.0",
+    "pyright>=1.1.400",
 ]
 test = [
     "pytest>=8.0",
@@ -56,23 +57,28 @@ version-file = "src/s3_bagit/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/s3_bagit"]
 
+# bash-completion's on-demand loader finds this beside the `uv tool install`
+# symlink's real path, so Tab works with no profile edit.
+# Regenerate with `make completions`; tests/test_completion.py catches drift.
+[tool.hatch.build.targets.wheel.shared-data]
+"completions/s3-bagit.bash" = "share/bash-completion/completions/s3-bagit"
+
 [tool.uv]
-# Local-only tool: keep everything available after `uv sync` per PYTHON.md §6.
+# Local-only tool: keep everything available after `uv sync`.
 default-groups = ["dev", "test"]
 
 [tool.ruff]
 line-length = 100
+# Pinned, not inferred from requires-python, so the
+# py312-gated UP rules cannot silently fall back to ruff's 3.10 default.
+target-version = "py312"
 # mdformat owns Markdown (`make format-docs`). ruff's preview formatter
 # rewrites Python fences inside .md, so excluding .md keeps the two
-# formatters from contending over docs. See PYTHON.md §14.
+# formatters from contending over docs.
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
-# Categories deliberately left out of `select` (PYTHON.md §14 asks for the
-# rationale in-file):
-# - TRY (tryceratops): all 18 findings are TRY003, "long message outside the
-#   exception class". BagError / S3OperationError carry the per-call context
-#   an operator needs — which manifest, which key — in the message on purpose.
+# Categories deliberately left out of `select`, with the rationale kept here:
 # - PLR (pylint refactor): fires PLR0913 on the bag entry points
 #   (create_bag / verify / verify_against), whose long keyword-argument lists
 #   are the public API, and PLR2004 on the literal expected values that are
@@ -93,12 +99,17 @@ select = [
     "S",      # flake8-bandit
     "SIM",    # flake8-simplify
     "T20",    # flake8-print
+    "TRY",    # tryceratops
     "UP",     # pyupgrade
     "W",      # pycodestyle warnings
     "PLC",
     "PLE",
     "PLW",
 ]
+# TRY is selected whole; only TRY003 ("long message outside the exception
+# class") is ignored. BagError / S3OperationError carry the per-call context an
+# operator needs (which manifest, which key) in the message on purpose.
+ignore = ["TRY003"]
 
 # The paired upstream s3-archive gets its own import block, between the
 # third-party and s3_bagit blocks: it is first-party code that ships from
@@ -144,9 +155,9 @@ max-complexity = 10
 exclude_dirs = [".venv", "tests"]
 # B324 (weak md5/sha1 hash) is deliberately NOT skipped: the two hasher
 # constructions in create_bag.py pass `usedforsecurity=False`, which bandit
-# honors natively (SECURITY.md §4a), so a genuinely security-shaped hash added
+# honors natively, so a genuinely security-shaped hash added
 # later still reports.
-skips = ["B101"]  # assert (tests are excluded above; keeps the fleet default)
+skips = ["B101"]  # assert (tests are excluded above)
 
 [tool.pysmelly]
 # Test setup boilerplate (bag-fixture construction) dominates duplicate-blocks
@@ -160,13 +171,19 @@ exclude = ["tests/"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "--strict-markers -ra --tb=short"
+# Every warning fails the run. A third-party warning
+# that must be tolerated is ignored here by name, one entry each, with why.
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 # `src`, not `src/s3_bagit`: a second top-level package added under src/
-# would otherwise be measured at zero and never noticed (PYTHON-TESTING.md §6).
+# would otherwise be measured at zero and never noticed.
 source = ["src"]
 branch = true
-omit = ["*/__init__.py"]
+# Not `*/__init__.py`: the package __init__ carries the __version__ fallback,
+# which is logic, not an import. _version.py is the
+# hatch-vcs build output (gitignored), generated code like a migration.
+omit = ["src/s3_bagit/_version.py"]
 
 [tool.coverage.report]
 # A floor, not a target: kept just under the total `make test-cov` reports

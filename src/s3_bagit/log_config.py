@@ -4,8 +4,7 @@ One module-level logger per file. Console handler is attached lazily by
 the CLI entry point so library callers can configure logging themselves.
 
 Verbosity has exactly two inputs, in this order: the ``--verbose`` flag
-(an operator asking for detail on this one run) and ``$LOG_LEVEL`` (the
-fleet-wide level variable — LOGGING.md, "CLI / batch-runner logging").
+(an operator asking for detail on this one run) and ``$LOG_LEVEL``.
 Absent both, INFO.
 """
 

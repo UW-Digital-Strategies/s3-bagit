@@ -19,6 +19,41 @@ from s3_archive.s3_client import _reset_client_cache
 
 from s3_bagit import log_config
 
+# Every variable s3-bagit or s3-archive reads, plus the boto3 credential
+# chain's own. Scrubbed per test so neither the operator's shell nor a .env
+# reaches the suite; a test that needs one sets it.
+_OPERATOR_ENV_VARS = (
+    "S3CMD_CONFIG",
+    "S3_ENDPOINT_URL",
+    "LOG_LEVEL",
+    "AWS_PROFILE",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN",
+)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_environment(tmp_path, monkeypatch):
+    """Keep the operator's environment, .env and home directory out of every test.
+
+    ``cli.main()`` loads ``.env`` from the CWD, and ``load_dotenv`` writes
+    into ``os.environ`` for the rest of the process: run from a checkout
+    that holds an operator's ``.env``, the first CLI test would hand every
+    later test its ``S3CMD_CONFIG``, endpoint and log level. Running each
+    test from an empty directory means no ``.env`` is found; HOME is moved
+    likewise, so ``~/.s3cfg`` and ``~/.aws`` resolve to nothing real.
+    """
+    for var in _OPERATOR_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    workdir = tmp_path / "_cwd"
+    home = tmp_path / "_home"
+    workdir.mkdir()
+    home.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setenv("HOME", str(home))
+
 
 @pytest.fixture(autouse=True)
 def _clear_client_cache():
@@ -44,8 +79,8 @@ def _quiet_logging():
     botocore's INFO records ("Found credentials in environment variables")
     reach stderr, and a ``--verbose`` test leaves the root logger at DEBUG for
     every test after it. No test asserts on log records -- the CLI's operator
-    output is ``print``, not logging -- so suppress outright per
-    PYTHON-TESTING.md #5 and hand the root logger back as it was found.
+    output is ``print``, not logging -- so suppress outright and hand the
+    root logger back as it was found.
     """
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
@@ -103,8 +138,8 @@ def cross_env_real_endpoints(tmp_path, monkeypatch):
     src_server.start()
     dst_server.start()
     try:
-        src_port = src_server._server.socket.getsockname()[1]
-        dst_port = dst_server._server.socket.getsockname()[1]
+        _, src_port = src_server.get_host_and_port()
+        _, dst_port = dst_server.get_host_and_port()
         src_endpoint = f"http://127.0.0.1:{src_port}"
         dst_endpoint = f"http://127.0.0.1:{dst_port}"
 

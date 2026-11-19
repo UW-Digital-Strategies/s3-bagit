@@ -47,7 +47,6 @@ Thumbs.db
 
 # Local ephemera (test bags, scratch) + fileplan session state (lock, claims)
 local/
-logs/
 
-# detect-secrets bootstrap temp file (see SECURITY.md Practice #8)
+# detect-secrets bootstrap temp file
 .secrets.baseline.tmp

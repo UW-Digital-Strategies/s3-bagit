@@ -19,7 +19,7 @@ URLs accept an optional `profile:` prefix
 (`profile_name:s3://bucket/key`) for multi-provider workflows — see
 [Multiple S3 providers](#multiple-s3-providers) below.
 
-> Bookmark `https://github.com/borwickatuw/s3-bagit#readme` — this
+> Bookmark `https://github.com/UW-Digital-Strategies/s3-bagit#readme` — this
 > README is the canonical user guide.
 
 ## Quick start
@@ -55,7 +55,7 @@ shells, including PowerShell, only read `PATH` at launch.
 ### 3. Install s3-bagit
 
 ```
-uv tool install git+https://github.com/borwickatuw/s3-bagit
+uv tool install git+https://github.com/UW-Digital-Strategies/s3-bagit
 ```
 
 ### 4. Configure credentials
@@ -74,7 +74,7 @@ the endpoint prompt if you're targeting AWS S3.
 s3-bagit --version
 ```
 
-You should see a version string like `s3-bagit 0.2.0`. If you see
+You should see `s3-bagit` followed by a version string. If you see
 `command not found` instead, step 2 didn't take effect — close every
 terminal window and open a fresh one.
 
@@ -118,7 +118,7 @@ up once is visible to both tools.
 For the full setup walkthrough — profile naming rules, where the
 files land, how the resolver picks them up — see
 [s3-archive's "Multiple S3 providers"
-section](https://github.com/borwickatuw/s3-archive#multiple-s3-providers).
+section](https://github.com/UW-Digital-Strategies/s3-archive#multiple-s3-providers).
 
 ### Extract a bag
 
@@ -145,7 +145,7 @@ the top-level directory inside the archive (the bag root). Each
 payload object is read from S3 exactly once: its bytes are hashed for
 the manifest and pushed into the tar simultaneously, and the
 compressed output streams through a pipe straight into a multipart
-upload. The four tag files (`bagit.txt`, `bag-info.txt`,
+upload. The tag files (`bagit.txt`, `bag-info.txt`,
 `manifest-sha256.txt`, `tagmanifest-sha256.txt`) are appended to the
 tar after the payload — see
 [`docs/BAGIT-SPEC.md`](docs/BAGIT-SPEC.md#tag-file-ordering-in-create-bag-archives)
@@ -293,6 +293,18 @@ s3-bagit <subcommand> --help # per-subcommand: positional args + flags
 For example, `s3-bagit extract --help` shows the exact form of
 `--no-verify`, `--dry-run`, and the expected URLs.
 
+### Tab completion (bash)
+
+`uv tool install` puts a bash completion script for subcommands and
+flags inside the tool's environment. bash-completion releases that look
+beside the command's real path load it on the first Tab press. Older
+ones (bash-completion 2.11, as on Ubuntu 22.04) don't, so add this
+line to `~/.bashrc`:
+
+```
+source "$(uv tool dir)/s3-bagit/share/bash-completion/completions/s3-bagit"
+```
+
 ### Credential resolution order
 
 The order below applies to the **default profile** (bare `s3://...`
@@ -341,19 +353,19 @@ all of them.
 | ---- | -------------------------------------------------------------------------------------------- |
 | 0    | Success.                                                                                     |
 | 1    | Bag failed verification (or `extract --no-verify` succeeded but `verify` later failed).      |
-| 2    | Configuration error (missing creds, bad S3 URL, unsupported format).                         |
+| 2    | Configuration error (missing creds, bad S3 URL, unsupported format), or a usage error.       |
 | 4    | The S3 endpoint failed an operation mid-run (the message names the operation and both URLs). |
 | 130  | Cancelled by Ctrl-C.                                                                         |
 
 ### Running from a clone (contributors)
 
 ```
-git clone https://github.com/borwickatuw/s3-bagit
+git clone https://github.com/UW-Digital-Strategies/s3-bagit
 cd s3-bagit
 make install      # uv sync (dev + test deps)
 make test         # uv run pytest
-make lint         # ruff check + format --check
-make security     # bandit + uv audit + detect-secrets + licenses
+make lint         # ruff check + format --check + pyright
+make security     # bandit + uv audit + nested lockfiles + detect-secrets + licenses
 make run ARGS='extract s3://… s3://…'
 ```
 

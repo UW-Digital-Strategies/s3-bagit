@@ -12,13 +12,31 @@ if both operations stream **S3 → S3**.
 
 That single requirement drives most of the code shape below.
 
+## Components
+
+s3-bagit is a satellite of **s3-archive** ([DECISIONS.md](DECISIONS.md)
+006), and the line between them is the main structural fact:
+
+- **s3-archive** (runtime dependency, pinned to a git tag) owns
+  everything that is about archives and S3 rather than BagIt: archive
+  extraction and listing, member iteration for every supported
+  format, S3 client and profile resolution, S3 URL parsing and format
+  detection, and the streaming hash primitives (`s3_archive.hashing`).
+- **s3-bagit** owns BagIt semantics: the RFC 8493 checks
+  (`verify`, `verify_against`, and the checks the two share in
+  `_bagit_checks`), bag creation (`create_bag`), and the CLI that turns
+  results into reports and exit codes (`cli`, `_cli_parsers`).
+
+The per-module file map is CLAUDE.md "Project Structure".
+
 ## Extract
 
-For both formats, the archive object is fetched from S3 with one
-`get_object` call, whose `Body` is a `botocore.response.StreamingBody`.
-That body is then handed to a streaming decoder, which yields one
-member at a time, and each member is pushed to S3 via
-`upload_fileobj`.
+Extraction is s3-archive's `extract`; s3-bagit calls it and adds the
+BagIt part around it. The archive object is fetched from S3 as one
+stream, handed to a streaming decoder that yields one member at a
+time, and each member is pushed to S3 via `upload_fileobj`. The
+decoder and the upload adapters that make non-seekable member streams
+acceptable to boto3 live in s3-archive; see its `docs/ARCHITECTURE.md`.
 
 ```
         ┌──────────────────────────┐
@@ -48,23 +66,16 @@ member at a time, and each member is pushed to S3 via
 Nothing is buffered between the decoder and the uploader except the
 chunk of the current member being passed through.
 
-### Adapter for non-seekable sources
+What s3-bagit adds after the members land, in `cli._cmd_extract`:
 
-`boto3.upload_fileobj` dispatches its upload strategy on
-`readable()` / `seekable()`. The streaming sources here — `tarfile`'s
-`extractfile()` in `r|gz` mode, and `stream_unzip`'s per-member chunk
-iterators — are read-once and not seekable, and they don't expose
-those two methods at all. Calling `upload_fileobj` on them raw raises
-`AttributeError`.
-
-`extract._NonSeekableReader` and `extract._IterableFileobj` add the
-two methods (returning `True` and `False` respectively), which steers
-boto3 to its `UploadNonSeekableInputManager` path. That path uses
-chunked single-part uploads, which is what we want for streaming.
-
-The same shape is common in streaming-archive code elsewhere; the
-wrappers here are self-contained, so s3-bagit carries no extra runtime
-dependency for them.
+- **Bag-root detection.** If the archive wraps the bag in one
+  top-level directory, auto-verify is pointed at the nested bag root.
+- **`--strip-top-level`.** Moves every `<dest>/<wrap>/<rel>` object
+  to `<dest>/<rel>` with server-side copies plus deletes — no bytes
+  flow through the workstation.
+- **Auto-verify.** `verify_bag` runs on the landed bag unless
+  `--no-verify` is given; it is also the integrity check on the
+  strip-top-level moves.
 
 ## Create-bag
 
@@ -77,8 +88,8 @@ once to write into the tar.
 
 We avoid the second pass with two tricks:
 
-1. **Tee the read**: each S3 GET is consumed by a
-   `_HashingBody` wrapper whose `read()` updates a `hashlib` hasher
+1. **Tee the read**: each S3 GET is consumed by s3-archive's
+   `HashingTap`, whose `read()` updates a `hashlib` hasher
    on the way through. `tarfile.addfile(info, fileobj)` reads exactly
    `info.size` bytes from `fileobj`, so the single S3 GET produces
    both the tar member bytes and the manifest checksum.
@@ -88,8 +99,9 @@ We avoid the second pass with two tricks:
    `manifest-<algo>.txt`, and `tagmanifest-<algo>.txt` (built in
    memory from the accumulated digests).
 
-The compressed tar output goes through an `os.pipe()` to a worker
-thread that runs `client.upload_fileobj` against the read end:
+The compressed tar output goes through an `os.pipe()` to a
+single-worker thread pool that runs `client.upload_fileobj` against
+the read end (`create_bag._tar_streamed_to_s3`):
 
 ```
         ┌──────────────────────────┐
@@ -99,7 +111,7 @@ thread that runs `client.upload_fileobj` against the read end:
                      │  body chunks
                      ▼
         ┌──────────────────────────┐
-        │ _HashingBody (tee)       │──► manifest digest
+        │ HashingTap (tee)         │──► manifest digest
         └────────────┬─────────────┘
                      │  same bytes
                      ▼
@@ -122,8 +134,9 @@ thread that runs `client.upload_fileobj` against the read end:
 
 Broken-pipe semantics make error propagation clean: if the uploader
 dies mid-stream, the writer side sees `BrokenPipeError` on its next
-flush. The `create_bag` function joins the worker thread before
-returning and re-raises whichever exception fired.
+flush. `_tar_streamed_to_s3` joins the upload in a `finally` through
+`Future.result()`, so the upload's real cause is what is raised, with
+the write-side `BrokenPipeError` riding along as its `__context__`.
 
 ## Verify
 
@@ -133,9 +146,10 @@ listed checksum matches the bytes that are there." There is no
 metadata-only shortcut that gives the same correctness guarantee.
 
 But "download + hash" is still streaming: each S3 object is read in
-64 KiB chunks into the hasher, and the chunks are released immediately
-after being hashed. The hasher itself holds only its algorithm-specific
-state (~kilobytes), not the file's contents.
+fixed-size chunks (s3-archive's `stream_hash_object`) into the
+hashers, and the chunks are released immediately after being hashed.
+A hasher holds only its algorithm-specific state (~kilobytes), not the
+file's contents.
 
 ```
         ┌──────────────────────────┐
@@ -145,7 +159,7 @@ state (~kilobytes), not the file's contents.
                      │  get_object().Body
                      ▼
         ┌──────────────────────────┐
-        │ while chunk = read(64K): │
+        │ for chunk in body:       │
         │   hasher.update(chunk)   │
         └────────────┬─────────────┘
                      │  hexdigest()
@@ -156,10 +170,11 @@ state (~kilobytes), not the file's contents.
         └──────────────────────────┘
 ```
 
-Verify is single-pass per file but **multi-pass over the bag** when
-multiple manifest algorithms are present — each manifest is checked
-in its own pass, because the algorithm is fixed per pass. For the
-typical case of one manifest (`sha256`), that's one pass.
+Verify is **single-pass per file**, whatever the number of manifest
+algorithms: `_verify_files_single_pass` issues one GET per file and
+feeds it to every algorithm whose manifest listed that file. The bag
+is walked twice — payload files against the payload manifests, then
+tag files against the tag manifests — and each file is read once.
 
 ## Verify-against
 
@@ -178,7 +193,7 @@ Mechanically it stitches together the streaming patterns from
                      │  one full stream
                      ▼
         ┌──────────────────────────┐
-        │ tarfile r|gz             │
+        │ iter_archive_members     │
         │  capture tag-file bytes  │
         │  drain payload bytes     │
         └────────────┬─────────────┘
@@ -213,9 +228,12 @@ Two structural notes:
   produces) and an unwrapped one parse identically.
 - **Multi-algorithm bags are still single-pass per file.** For a bag
   with both `manifest-sha256.txt` and `manifest-sha512.txt`, each
-  target file is read once and fed through both hashers via
-  `_stream_hash_multi`. We do *not* re-issue `get_object` per
+  target file is read once and fed through both hashers by
+  `stream_hash_object`. We do *not* re-issue `get_object` per
   algorithm.
+- **Any supported archive format.** The archive is read through
+  s3-archive's `iter_archive_members`, so every format `extract`
+  accepts (README "Supported archive formats") works here too.
 
 ## Why "collect all errors" instead of fail-fast
 
@@ -225,9 +243,12 @@ invocation. The `BagVerifyResult` dataclass accumulates errors and
 warnings; the CLI prints the full list at the end and exits 1 if
 any errors were collected.
 
-Within a single verify pass we still bail early on truly fatal
-structural problems (no `bagit.txt`, malformed manifest line) because
-continuing past those would produce confusing cascade errors.
+In `verify`, a missing `bagit.txt` or an unparseable manifest is
+recorded as an error and the run carries on. A run stops early only where there is
+nothing left to check: `verify` on a prefix with no objects, and
+`verify_against` on an unreadable archive, no bag root, no payload
+manifest, or an empty target prefix. HOWTO-SIMPLIFY.md "C901 ledger"
+states the rule that keeps helpers from adding new early returns.
 
 ## What's deliberately NOT here
 

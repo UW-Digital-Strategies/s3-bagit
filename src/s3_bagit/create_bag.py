@@ -107,7 +107,7 @@ def _build_tagmanifest_txt(
         # usedforsecurity=False: BagIt manifests are fixity checksums, and
         # md5/sha1 are legal RFC 8493 algorithms. The keyword records that in
         # Python (and keeps the call working in FIPS mode) instead of taking a
-        # bandit suppression — SECURITY.md §4a.
+        # bandit suppression.
         hasher = hashlib.new(algorithm, usedforsecurity=False)
         hasher.update(body)
         entries.append((hasher.hexdigest(), name))

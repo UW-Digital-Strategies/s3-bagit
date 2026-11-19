@@ -132,16 +132,14 @@ def _verify_files_single_pass(
     *,
     payload: bool,
     on_progress: ProgressCallback | None = None,
-) -> set[str]:
+) -> None:
     """Hash each file once, fanning out to every algorithm that listed it.
 
     One S3 GET per file regardless of how many manifest algorithms the
     bag carries.
     """
-    covered: set[str] = set()
     label = "manifest" if payload else "tagmanifest"
     for rel, expected_by_algo in sorted(expected_map.items()):
-        covered.add(rel)
         if _reject_misplaced_entry(rel, expected_by_algo, result, payload=payload):
             continue
         if rel not in objects:
@@ -160,7 +158,6 @@ def _verify_files_single_pass(
                 log.debug("%s ok (%s) %s", label, algo, rel)
         if on_progress is not None:
             on_progress(rel, objects[rel]["Size"])
-    return covered
 
 
 def _discover_manifest_names(

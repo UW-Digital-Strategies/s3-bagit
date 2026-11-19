@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Bash tab completion for subcommands and flags, installed with the
+  tool. See README "Tab completion (bash)".
+
 ## [1.5.1] - 2026-10-22
 
 ### Changed

@@ -34,6 +34,7 @@ and the exception-to-exit-code translation.
 """
 
 import argparse
+import io
 import sys
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -161,15 +162,18 @@ def _progress_bar(*, desc: str) -> tqdm:
     )
 
 
-def _truncate_for_postfix(name: str, width: int = 40) -> str:
-    """Trim *name* to the right-most *width* chars; postfix ellipsis if cut.
+_POSTFIX_WIDTH = 40
+
+
+def _truncate_for_postfix(name: str) -> str:
+    """Trim *name* to the right-most ``_POSTFIX_WIDTH`` chars; ellipsis if cut.
 
     Keeps the tail of the path because that's where the unique-per-file
     information lives (the bag prefix repeats across every member).
     """
-    if len(name) <= width:
+    if len(name) <= _POSTFIX_WIDTH:
         return name
-    return "…" + name[-(width - 1) :]
+    return "…" + name[-(_POSTFIX_WIDTH - 1) :]
 
 
 def _make_per_file_progress_cb(bar: tqdm):
@@ -226,12 +230,16 @@ def _detect_archive_wrap(members: list[str]) -> str | None:
     return top
 
 
-def _summarize_archive_top_level(members: list[str], *, limit: int = 5) -> str:
+_TOP_LEVEL_SUMMARY_LIMIT = 5
+
+
+def _summarize_archive_top_level(members: list[str]) -> str:
     """Build a short human-readable description of distinct top-level entries.
 
     Used in the --strip-top-level error message so the operator can see
     why the strict check refused. Files at root are shown as ``<root>/<name>``
-    to distinguish them from directories.
+    to distinguish them from directories; past ``_TOP_LEVEL_SUMMARY_LIMIT``
+    entries the rest are elided and the total is given.
     """
     seen: set[str] = set()
     entries: list[str] = []
@@ -247,8 +255,8 @@ def _summarize_archive_top_level(members: list[str], *, limit: int = 5) -> str:
         entries.append(label)
     if not entries:
         return "(empty archive)"
-    if len(entries) > limit:
-        return ", ".join(entries[:limit]) + f", … ({len(entries)} total)"
+    if len(entries) > _TOP_LEVEL_SUMMARY_LIMIT:
+        return ", ".join(entries[:_TOP_LEVEL_SUMMARY_LIMIT]) + f", … ({len(entries)} total)"
     return ", ".join(entries)
 
 
@@ -543,7 +551,24 @@ _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
 }
 
 
+def _utf8_output_streams() -> None:
+    """Write stdout and stderr as UTF-8 whatever the host locale says.
+
+    Help text, log lines and report output carry non-ASCII — em dashes and
+    ellipses in our own strings, and object keys such as Korean filenames
+    — and an inherited ASCII or Latin-1 stream raises UnicodeEncodeError on
+    the first one. A stream that is not a
+    TextIOWrapper was installed by an embedding caller, which owns its
+    encoding.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_output_streams()
+
     # Load .env from CWD if present — operators frequently invoke from
     # the repo directory; CI / Docker should rely on the real environment.
     env_path = Path(".env")

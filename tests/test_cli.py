@@ -1,13 +1,15 @@
 """End-to-end CLI smoke tests (with a patched S3 client + moto)."""
 
 import argparse
+import subprocess
+import sys
 from unittest.mock import patch
 
 import pytest
 from botocore.exceptions import ClientError
 
 from s3_bagit._cli_parsers import _build_parser
-from s3_bagit.cli import _COMMANDS, main
+from s3_bagit.cli import _COMMANDS, _POSTFIX_WIDTH, _truncate_for_postfix, main
 from s3_bagit.create_bag import create_bag
 
 from .conftest import build_7z, build_tar_gz, build_zip, make_bag_files, upload_bag_to_prefix
@@ -184,6 +186,12 @@ class TestExtractStripTopLevel:
                 {"out/a/x.txt", "out/b/y.txt"},
                 id="multiple-top-level-dirs",
             ),
+            pytest.param(
+                {f"{d}/x.txt": b"1" for d in "abcdef"},
+                ("--strip-top-level requires", "Found: a/, b/, c/, d/, e/, … (6 total)."),
+                {f"out/{d}/x.txt" for d in "abcdef"},
+                id="summary-elides-past-the-limit",
+            ),
         ],
     )
     def test_strip_top_level_errors_without_a_single_wrap(
@@ -200,6 +208,21 @@ class TestExtractStripTopLevel:
             assert fragment in stderr, stderr
         # Files were extracted (and left in place per spec).
         assert expected_keys <= _dest_keys(patched_client)
+
+
+class TestTruncateForPostfix:
+    """Progress-bar postfix names keep their tail and fit ``_POSTFIX_WIDTH``."""
+
+    def test_name_at_the_width_is_unchanged(self):
+        name = "d" * (_POSTFIX_WIDTH - 4) + ".txt"
+        assert _truncate_for_postfix(name) == name
+
+    def test_longer_name_keeps_its_tail_behind_an_ellipsis(self):
+        name = "bag-prefix/" + "d" * _POSTFIX_WIDTH + "/file.txt"
+        out = _truncate_for_postfix(name)
+        assert len(out) == _POSTFIX_WIDTH
+        assert out.startswith("…")
+        assert name.endswith(out[1:])
 
 
 def _make_client_error(
@@ -562,11 +585,11 @@ class TestIssueCommand:
         captured = capsys.readouterr()
         assert rc == 0
         assert len(opened) == 1
-        assert opened[0].startswith("https://github.com/borwickatuw/s3-bagit/issues/new?")
+        assert opened[0].startswith("https://github.com/UW-Digital-Strategies/s3-bagit/issues/new?")
         # The brief travels through the URL.
         assert "something" in opened[0]
         # And the URL is also printed for copy-paste.
-        assert "github.com/borwickatuw/s3-bagit/issues/new" in captured.out
+        assert "github.com/UW-Digital-Strategies/s3-bagit/issues/new" in captured.out
 
     def test_issue_falls_back_when_no_browser(self, capsys, monkeypatch):
         monkeypatch.setattr("s3_bagit.issue.webbrowser.open", lambda url: False)
@@ -653,3 +676,26 @@ class TestParserHandlerSeam:
     def test_every_subcommand_is_reachable_by_name(self):
         for name in sorted(self._declared_subcommands()):
             assert callable(_COMMANDS[name])
+
+
+class TestNonUtf8HostStreams:
+    """The CLI's own streams are UTF-8 on a host whose locale is not.
+
+    ``--help`` and the log lines carry em dashes and ellipses, and report
+    lines carry object keys, so an inherited Latin-1 stdout raised
+    UnicodeEncodeError before any S3 call.
+    ``PYTHONIOENCODING`` stands in for a Latin-1 locale, which hosts do not
+    all ship; it has to be a real process, because pytest's capture streams
+    are already UTF-8.
+    """
+
+    def test_help_survives_latin1_stdout(self, monkeypatch):
+        monkeypatch.setenv("PYTHONIOENCODING", "latin-1")
+        monkeypatch.setenv("PYTHONUTF8", "0")
+        result = subprocess.run(
+            [sys.executable, "-m", "s3_bagit", "--help"],
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+        assert "—" in result.stdout.decode("utf-8")

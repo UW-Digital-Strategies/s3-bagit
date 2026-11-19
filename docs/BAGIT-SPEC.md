@@ -33,7 +33,7 @@ variants and (BagIt-non-standard) `.7z`:
 | `.7z`               | seekable-S3 + py7zr; see note below                 |
 
 All formats share the same streaming dispatch in
-[`s3_archive.members.iter_archive_members`](https://github.com/borwickatuw/s3-archive) —
+[`s3_archive.members.iter_archive_members`](https://github.com/UW-Digital-Strategies/s3-archive) —
 tar variants via `tarfile.open(fileobj=..., mode=m)`, zip via
 `stream-unzip`, 7z via py7zr driven by a seekable-S3 adapter (range
 GETs + tail prefetch, no local disk).
@@ -49,7 +49,7 @@ The implementation reaches into the underlying s3-archive library,
 which handles the "7z's index lives at the tail" problem with a
 seekable-S3 adapter (ranged GETs + a one-time tail prefetch); the
 "no local disk" promise still holds. See
-[`s3-archive/docs/ARCHITECTURE.md`](https://github.com/borwickatuw/s3-archive/blob/main/docs/ARCHITECTURE.md)
+[`s3-archive/docs/ARCHITECTURE.md`](https://github.com/UW-Digital-Strategies/s3-archive/blob/main/docs/ARCHITECTURE.md)
 § ".7z — the exception that proves the rule" for the design.
 
 **Operations that accept `.7z`:**
@@ -73,9 +73,12 @@ without warning. Anything else issues a warning but is still
 attempted; if `hashlib.new()` rejects the name, the run fails with a
 descriptive error.
 
-Bandit's `B324` warning about MD5/SHA1 is suppressed for `verify.py`
-because BagIt expressly allows both for backward compatibility with
-older bags.
+BagIt expressly allows MD5 and SHA-1 for backward compatibility with
+older bags. Bandit's `B324` (weak hash) is **not** skipped for that:
+every hasher, in s3-archive's `hashing` module and in `create_bag.py`,
+is built with `usedforsecurity=False`, which bandit honors natively,
+so a security-shaped hash added later still reports (`[tool.bandit]`
+in `pyproject.toml`).
 
 ## Tag-file ordering in `create-bag` archives
 
@@ -115,8 +118,9 @@ Per RFC 8493 §3:
 - **`bag-info.txt` semantics** beyond `Payload-Oxum`. Standard fields
   like `Source-Organization`, `Bagging-Date`, `External-Identifier`
   are parsed but their *values* aren't validated. Adding validation
-  for any of them is straightforward in `verify._check_payload_oxum`
-  if the Preservation team wants it.
+  for any of them is straightforward beside `_check_payload_oxum` in
+  `_bagit_checks.py`, which both verifiers share, if the Preservation
+  team wants it.
 
 ## References
 

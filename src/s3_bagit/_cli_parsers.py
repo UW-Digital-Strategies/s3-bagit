@@ -15,7 +15,7 @@ that file's growth.
 
 **Every name here is ``_``-prefixed, and that is a design constraint,
 not a style choice** — the same rule ``_bagit_checks.py`` carries (see
-``docs/PYSMELLY.md``, Phase 68g). pysmelly's ``build_function_index``
+``docs/PYSMELLY.md``). pysmelly's ``build_function_index``
 skips private names, so the checks that key on public shape cannot fire
 on helpers whose shape is dictated by argparse rather than by us. Any
 member added here inherits the underscore.
@@ -24,10 +24,11 @@ member added here inherits the underscore.
 # argparse is deliberate: the paired repo s3-archive also builds its CLI
 # on argparse and the two ship together, so cross-repo consistency
 # outranks a per-repo preference for click/typer (docs/DECISIONS.md 006).
-# re-evaluate-by: 2026-11
-# The directive sits here, not in `cli.py`: `stdlib-alternatives` lists
-# both files and suppresses only at its first-listed (anchor) location,
-# which this split moved to this module.
+# Re-evaluated 2026-11-17: s3-archive still builds on argparse, so it
+# stands. re-evaluate-by: 2027-11
+# `stdlib-alternatives` suppresses per site: this directive covers only
+# this module's import, and the other argparse sites still report
+# (docs/PYSMELLY.md "Inline suppressions").
 # pysmelly: ignore[stdlib-alternatives]  # noqa: ERA001
 import argparse
 
