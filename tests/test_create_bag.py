@@ -254,7 +254,7 @@ class TestManifestPathEncoding:
 
 
 # Non-ASCII payload names a preservation tool has to carry through unchanged:
-# Korean (the fleet's standing CJK case) and a Latin accented name.
+# Korean (a standing CJK case) and a Latin accented name.
 _NON_ASCII_PAYLOAD = {
     "한국어/기록.txt": b"korean payload\n",
     "résumé-café.txt": b"accented payload\n",
